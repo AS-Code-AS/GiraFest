@@ -43,7 +43,7 @@ body{min-height:100vh;min-height:100dvh;-webkit-tap-highlight-color:transparent}
 button{touch-action:manipulation}
 input,textarea{font-size:16px}
 #root{padding-bottom:90px}
-.logo{position:fixed;right:12px;bottom:calc(12px + env(safe-area-inset-bottom,0px));width:78px;height:50px;background:var(--tx);opacity:.85;-webkit-mask-size:contain;mask-size:contain;-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-position:center;mask-position:center;pointer-events:none;z-index:5}
+.logo{position:fixed;left:12px;bottom:calc(60px + env(safe-area-inset-bottom,0px));width:78px;height:50px;background:var(--tx);opacity:.85;-webkit-mask-size:contain;mask-size:contain;-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-position:center;mask-position:center;pointer-events:none;z-index:5}
 @media (max-width:400px){h1{font-size:1.6rem}.chip{padding:9px 13px}}
 
 .modal{position:fixed;inset:0;background:rgba(0,0,0,.62);display:flex;align-items:center;justify-content:center;padding:20px;z-index:50;animation:up .25s both}
