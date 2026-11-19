@@ -22,7 +22,17 @@ const inRound=(r,round)=>String((r&&r.round)||'0')===round;
 /* Opciones que se DIBUJAN en la ruleta: todas las que no se han llevado otras personas (aunque tengas tapadas algunas para esta persona). */
 function visibleFor(cfg,taken){return withIds(cfg.options).filter(o=>!taken.has(o.id))}
 /* Opciones en las que esta persona SÍ puede caer (respeta las restricciones). */
-function poolFor(cfg,pid,taken){const allow=cfg.restr&&cfg.restr[pid];return withIds(cfg.options).filter(o=>!taken.has(o.id)&&(!allow||allow.includes(o.id)))}
+/* ¿Puede esta persona llevarse esta opción? (restricciones + en modo amigo secreto, nadie se saca a sí mismo) */
+const canTake=(cfg,pid,oid)=>{const a=cfg.restr&&cfg.restr[pid];return(!a||a.includes(oid))&&!(cfg.secret&&oid===pid)};
+function poolFor(cfg,pid,taken){return withIds(cfg.options).filter(o=>!taken.has(o.id)&&canTake(cfg,pid,o.id))}
+/* Si 'me' se lleva 'winId', ¿todos los que faltan todavía pueden quedar con algo? (emparejamiento) */
+function canFinish(cfg,people,done,taken,meId,winId){
+  const opts=withIds(cfg.options).filter(o=>!taken.has(o.id)&&o.id!==winId);
+  const left=people.filter(p=>p.id!==meId&&!done.has(p.id));
+  const owner={};
+  const tryP=(p,seen)=>{for(const o of opts){if(!canTake(cfg,p.id,o.id)||seen[o.id])continue;seen[o.id]=1;if(!owner[o.id]||tryP(owner[o.id],seen)){owner[o.id]=p;return true}}return false};
+  return left.every(p=>tryP(p,{}));
+}
 const split=t=>{if(t.length<=13)return[t];const m=t.length/2;let b=-1,bd=99;for(let i=0;i<t.length;i++)if(t[i]===' '&&Math.abs(i-m)<bd){bd=Math.abs(i-m);b=i}const c=s=>s.length>14?s.slice(0,13)+'…':s;return b<0?[c(t)]:[c(t.slice(0,b)),c(t.slice(b+1))]};
 
 /* ---------- Imagen del premio (PNG) ---------- */
@@ -151,11 +161,13 @@ function Play({db,cfg,res,me,setMe,dl,T,title}){
   async function spin(){
     initAudio();setMsg('');setSpinning(false);
     const snap=await db.collection('results').get();
-    const tk=new Set(snap.docs.map(d=>d.data()).filter(d=>inRound(d,round)).map(d=>d.optionId).filter(Boolean));
+    const docs=snap.docs.map(d=>({id:d.id,...d.data()})).filter(d=>inRound(d,round));
+    const tk=new Set(docs.map(d=>d.optionId).filter(Boolean)),done=new Set(docs.filter(d=>d.optionId).map(d=>d.id));
     const pool=poolFor(cfg,me,tk);              /* donde SÍ puede caer */
     const vis=visibleFor(cfg,tk);               /* lo que se dibuja: todas */
     if(!pool.length){setMsg('Ya no quedan opciones disponibles para ti. Avísale a quien organiza.');return}
-    const win=pool[Math.floor(Math.random()*pool.length)];
+    const safe=pool.filter(o=>canFinish(cfg,people,done,tk,me,o.id)); /* evita que alguien se quede sin opciones */
+    const pick_=safe.length?safe:pool,win=pick_[Math.floor(Math.random()*pick_.length)];
     const idx=Math.max(0,vis.findIndex(o=>o.id===win.id)),seg=360/vis.length;
     setFrozen(vis);
     const target=rot-(rot%360)+360*7+(360-(idx+.5)*seg)+(Math.random()-.5)*seg*.7;
@@ -184,7 +196,7 @@ function Play({db,cfg,res,me,setMe,dl,T,title}){
         h('button',{className:'btn pulse',onClick:join},`Sí, soy ${who.label}`),
         h('button',{className:'btn ghost',onClick:()=>setConfirmOpen(false)},'Volver'))),
     h('div',{className:'card'},h('h3',{style:{textAlign:'center',marginTop:0,fontFamily:T.tf}},'¿Quién eres?'),
-      free.length?h('div',{className:'chips'},free.map((p,i)=>h('button',{key:p.id,className:'chip'+(pick===p.id?' on':''),style:{animationDelay:i*60+'ms'},onClick:()=>setPick(p.id)},p.label))):h('p',{className:'mut'},'Todos ya entraron. 🎄'),
+      free.length?h('div',{className:'chips'},free.map((p,i)=>h('button',{key:p.id,className:'chip'+(pick===p.id?' on':''),style:{animationDelay:i*60+'ms'},onClick:()=>setPick(p.id)},p.label))):h('p',{className:'mut'},people.length?'Todos ya entraron. 🎄':'Aún no hay participantes. Vuelve en un momento.'),
       pick&&h('button',{className:'btn pulse',onClick:()=>setConfirmOpen(true)},'Soy '+people.find(p=>p.id===pick).label),
       h('p',{className:'mut'},'Elige con cuidado: una vez entres, ese nombre queda tomado.')));
   }
@@ -203,7 +215,7 @@ function Admin({db,cfg,res,raw,theme,T,title:evTitle,dl}){
   const [pt,setPt]=useState(cfg?cfg.people.join('\n'):'');
   const [ot,setOt]=useState(cfg?cfg.options.join('\n'):DEF_OPTS);
   const [allow,setAllow]=useState(cfg&&cfg.restr?cfg.restr:{});
-  const [ok,setOk]=useState('');
+  const [ok,setOk]=useState(''),[secret,setSecret]=useState(!!(cfg&&cfg.secret)),[reveal,setReveal]=useState(false);
   const [qr,setQr]=useState(null),[sumUrl,setSumUrl]=useState(null),[sumBlob,setSumBlob]=useState(null),[copied,setCopied]=useState(false);
   const link=window.location.origin+window.location.pathname;
   useEffect(()=>{QRCode.toDataURL(link,{width:420,margin:2,color:{dark:'#1a1a1a',light:'#ffffff'}}).then(setQr).catch(()=>{})},[]);
@@ -213,6 +225,7 @@ function Admin({db,cfg,res,raw,theme,T,title:evTitle,dl}){
   async function saveQr(){if(qr)dl.save({filename:'girafest-qr.png',data:await (await fetch(qr)).blob(),share:true})}
   const people=withIds(lines(pt)),opts=withIds(lines(ot));
   const isAllowed=(p,o)=>!allow[p]||allow[p].includes(o);
+  const hide=secret&&!reveal;
   function toggle(p,o){const cur=allow[p]||opts.map(x=>x.id);setAllow({...allow,[p]:cur.includes(o)?cur.filter(x=>x!==o):[...cur,o]})}
   const newRound=()=>String(Date.now());
   async function wipeAll(){for(const id of Object.keys(raw||{}))await db.doc('results/'+id).delete()}
@@ -222,10 +235,11 @@ function Admin({db,cfg,res,raw,theme,T,title:evTitle,dl}){
     const changed=!cfg||JSON.stringify(cfg.people||[])!==JSON.stringify(lines(pt))||JSON.stringify(cfg.options||[])!==JSON.stringify(lines(ot));
     const round=changed?newRound():roundOf(cfg);
     if(changed)await wipeAll();
-    await db.doc('config/main').set({title,people:lines(pt),options:lines(ot),restr,theme,date,round});setOk(changed?'¡Guardado! Ruleta nueva 🎉':'¡Guardado!');setTimeout(()=>setOk(''),2500);
+    await db.doc('config/main').set({title,people:lines(pt),options:lines(ot),restr,theme,date,round,secret});setOk(changed?'¡Guardado! Ruleta nueva 🎉':'¡Guardado!');setTimeout(()=>setOk(''),2500);
   }
   async function free(id){await db.doc('results/'+id).delete()}
   async function resetAll(){if(confirm('¿Borrar TODOS los resultados y empezar de nuevo?')){await wipeAll();if(cfg)await db.doc('config/main').set({...cfg,round:newRound()})}}
+  async function newDraw(){if(!confirm('¿Empezar un sorteo NUEVO? Se borran resultados, participantes, opciones y restricciones.'))return;await wipeAll();await db.doc('config/main').set({title,theme,secret,people:[],options:[],restr:{},date:'',round:newRound()});setPt('');setOt('');setAllow({});setDate('');setReveal(false)}
   return h('div',null,
     h('div',{className:'card'},h('label',null,'Título'),h('input',{value:title,onChange:e=>setTitle(e.target.value)}),
       h('label',null,'Fecha del evento'),
@@ -235,6 +249,8 @@ function Admin({db,cfg,res,raw,theme,T,title:evTitle,dl}){
         h('span',{className:'mut',style:{textAlign:'left'}},date?'Fecha fija: '+fmtDate(date):'Automática: cada imagen lleva el día en que se juega')),
       h('label',null,'Participantes (uno por línea)'),h('textarea',{rows:6,value:pt,placeholder:'Angie\nSandra\n…',onChange:e=>setPt(e.target.value)}),
       h('label',null,'Opciones de la ruleta (una por línea)'),h('textarea',{rows:7,value:ot,onChange:e=>setOt(e.target.value)}),
+      h('label',{style:{display:'flex',gap:8,alignItems:'center',marginTop:12}},h('input',{type:'checkbox',checked:secret,style:{width:'auto'},onChange:e=>setSecret(e.target.checked)}),'🎁 Modo amigo secreto (nadie se saca a sí mismo y nadie se queda sin opción)'),
+      secret&&h('div',{style:{marginTop:6}},h('button',{className:'chip small',onClick:()=>setOt(pt)},'Usar los participantes como opciones'),h('p',{className:'mut'},'En este modo las opciones deben ser los mismos nombres de los participantes, escritos igual.')),
       h('p',{className:'mut'},'El diseño que tengas elegido arriba se guarda como el predeterminado para todos.'),
       h('p',{className:'mut'},'Si cambias participantes u opciones, se crea una ruleta nueva y todos los celulares empiezan de cero.')),
     people.length>0&&h('div',{className:'card'},h('b',null,'Restricciones'),h('p',{className:'mut'},'Toca una opción para prohibírsela a esa persona (se tacha). La ruleta igual muestra todas las opciones, solo que nunca caerá en las tachadas.'),
@@ -242,11 +258,13 @@ function Admin({db,cfg,res,raw,theme,T,title:evTitle,dl}){
         h('div',{className:'chips',style:{justifyContent:'flex-start'}},opts.map(o=>h('button',{key:o.id,className:'chip small'+(isAllowed(p.id,o.id)?'':' off'),onClick:()=>toggle(p.id,o.id)},o.label)))))),
     h('button',{className:'btn',onClick:saveCfg},ok||'💾 Guardar configuración'),
     h('div',{className:'card'},h('b',null,'Resultados'),
-      people.map(p=>{const r=res[p.id];return h('div',{className:'row',key:p.id},h('span',null,p.label),h('span',null,r?(r.label||'entró, sin girar'):'—'),r&&h('button',{className:'chip small',onClick:()=>free(p.id)},'Liberar'))}),
-      h('button',{className:'btn',onClick:buildSummary},'🖼 Imagen con todos los premios'),
-      sumUrl&&h('div',{style:{textAlign:'center'}},h('img',{src:sumUrl,alt:'Resumen',style:{width:'100%',borderRadius:14,marginTop:10}}),
+      people.map(p=>{const r=res[p.id];return h('div',{className:'row',key:p.id},h('span',null,p.label),h('span',null,r?(r.label?(hide?'ya jugó ✓':r.label):'entró, sin girar'):'—'),r&&h('button',{className:'chip small',onClick:()=>free(p.id)},'Liberar'))}),
+      secret&&h('button',{className:'btn ghost',onClick:()=>setReveal(!reveal)},reveal?'🙈 Ocultar resultados':'👁 Mostrar resultados (arruina la sorpresa)'),
+      !hide&&h('button',{className:'btn',onClick:buildSummary},'🖼 Imagen con todos los premios'),
+      !hide&&sumUrl&&h('div',{style:{textAlign:'center'}},h('img',{src:sumUrl,alt:'Resumen',style:{width:'100%',borderRadius:14,marginTop:10}}),
         h('button',{className:'btn',onClick:()=>dl.save({filename:'girafest-premios.png',data:sumBlob,share:true})},'⬇ Guardar imagen')),
-      h('button',{className:'btn ghost',onClick:resetAll},'Reiniciar todo (ronda nueva)')),
+      h('button',{className:'btn ghost',onClick:resetAll},'Reiniciar todo (ronda nueva)'),
+      h('button',{className:'btn',onClick:newDraw},'🆕 Nuevo sorteo (limpiar todo)')),
     h('div',{className:'card',style:{textAlign:'center'}},h('b',null,'Compartir GiraFest'),
       qr&&h('img',{src:qr,alt:'QR',style:{width:'min(70vw,240px)',borderRadius:14,display:'block',margin:'12px auto'}}),
       h('input',{readOnly:true,value:link,onFocus:e=>e.target.select()}),
