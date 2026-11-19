@@ -16,6 +16,12 @@ const slug=s=>s.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().re
 const withIds=list=>{const seen={};return list.map(l=>{let b=slug(l);seen[b]=(seen[b]||0)+1;return{id:seen[b]>1?b+'-'+seen[b]:b,label:l}})};
 const lines=t=>t.split('\n').map(x=>x.trim()).filter(Boolean);
 const DEF_OPTS="Natilla tradicional\nBuñuelos\n25 buñuelos\nNatilla con arequipe\nGalletas y vino\nVino y galletas";
+/* Ronda: cada vez que se crea una ruleta nueva cambia el id. Resultados de otras rondas se ignoran. */
+const roundOf=cfg=>String((cfg&&cfg.round)||'0');
+const inRound=(r,round)=>String((r&&r.round)||'0')===round;
+/* Opciones que se DIBUJAN en la ruleta: todas las que no se han llevado otras personas (aunque tengas tapadas algunas para esta persona). */
+function visibleFor(cfg,taken){return withIds(cfg.options).filter(o=>!taken.has(o.id))}
+/* Opciones en las que esta persona SÍ puede caer (respeta las restricciones). */
 function poolFor(cfg,pid,taken){const allow=cfg.restr&&cfg.restr[pid];return withIds(cfg.options).filter(o=>!taken.has(o.id)&&(!allow||allow.includes(o.id)))}
 const split=t=>{if(t.length<=13)return[t];const m=t.length/2;let b=-1,bd=99;for(let i=0;i<t.length;i++)if(t[i]===' '&&Math.abs(i-m)<bd){bd=Math.abs(i-m);b=i}const c=s=>s.length>14?s.slice(0,13)+'…':s;return b<0?[c(t)]:[c(t.slice(0,b)),c(t.slice(b+1))]};
 
@@ -128,6 +134,7 @@ function Deco({e}){const ps=useRef(Array.from({length:18},()=>({l:Math.random()*
 function Play({db,cfg,res,me,setMe,dl,T,title}){
   const [pick,setPick]=useState(null),[rot,setRot]=useState(0),[spinning,setSpinning]=useState(false),[frozen,setFrozen]=useState(null),[msg,setMsg]=useState(''),[confirmOpen,setConfirmOpen]=useState(false),[muted,setMuted]=useState(isMuted());
   const [blob,setBlob]=useState(null),[url,setUrl]=useState(null);const auto=useRef(false);
+  const round=roundOf(cfg);
   const people=withIds(cfg.people||[]);
   const mine=me&&res[me];
   const taken=new Set(Object.values(res).map(r=>r.optionId).filter(Boolean));
@@ -138,21 +145,23 @@ function Play({db,cfg,res,me,setMe,dl,T,title}){
     makeImage(won,T,title,cfg.date).then(b=>{if(dead)return;setBlob(b);u=URL.createObjectURL(b);setUrl(u);if(auto.current){auto.current=false;setTimeout(()=>save(b,won),700)}});
     return()=>{dead=true;if(u)URL.revokeObjectURL(u)}},[won&&won.optionId,spinning,T.name,cfg.date]);
   async function join(){
-    try{await db.doc('results/'+pick).set({name:people.find(p=>p.id===pick).label,joined:true,at:Date.now()});localStorage.setItem('ruleta_me',pick)}catch(e){}
+    try{await db.doc('results/'+pick).set({name:people.find(p=>p.id===pick).label,joined:true,at:Date.now(),round});localStorage.setItem('ruleta_me',pick);localStorage.setItem('ruleta_round',round)}catch(e){}
     setConfirmOpen(false);setMe(pick);
   }
   async function spin(){
     initAudio();setMsg('');setSpinning(false);
     const snap=await db.collection('results').get();
-    const tk=new Set(snap.docs.map(d=>d.data().optionId).filter(Boolean));
-    const pool=poolFor(cfg,me,tk);
+    const tk=new Set(snap.docs.map(d=>d.data()).filter(d=>inRound(d,round)).map(d=>d.optionId).filter(Boolean));
+    const pool=poolFor(cfg,me,tk);              /* donde SÍ puede caer */
+    const vis=visibleFor(cfg,tk);               /* lo que se dibuja: todas */
     if(!pool.length){setMsg('Ya no quedan opciones disponibles para ti. Avísale a quien organiza.');return}
-    const idx=Math.floor(Math.random()*pool.length),seg=360/pool.length;
-    setFrozen(pool);
+    const win=pool[Math.floor(Math.random()*pool.length)];
+    const idx=Math.max(0,vis.findIndex(o=>o.id===win.id)),seg=360/vis.length;
+    setFrozen(vis);
     const target=rot-(rot%360)+360*7+(360-(idx+.5)*seg)+(Math.random()-.5)*seg*.7;
     requestAnimationFrame(()=>requestAnimationFrame(()=>{setSpinning(true);setRot(target)}));
     setTimeout(async()=>{
-      const r={name:player.label,optionId:pool[idx].id,label:pool[idx].label,joined:true,at:Date.now()};
+      const r={name:player.label,optionId:win.id,label:win.label,joined:true,at:Date.now(),round};
       auto.current=true;
       try{await db.doc('results/'+me).set(r)}catch(e){setMsg('No se pudo guardar. Intenta de nuevo.');auto.current=false}
       setSpinning(false);setFrozen(null);winSound();
@@ -179,16 +188,16 @@ function Play({db,cfg,res,me,setMe,dl,T,title}){
       pick&&h('button',{className:'btn pulse',onClick:()=>setConfirmOpen(true)},'Soy '+people.find(p=>p.id===pick).label),
       h('p',{className:'mut'},'Elige con cuidado: una vez entres, ese nombre queda tomado.')));
   }
-  const live=poolFor(cfg,me,taken),slices=frozen||live;
+  const live=poolFor(cfg,me,taken),visible=visibleFor(cfg,taken),slices=frozen||visible;
   return h('div',{className:'card'},h('h3',{style:{textAlign:'center',marginTop:0,fontFamily:T.tf,fontSize:'1.4rem'}},`Hola, ${player.label} 👋`),
-    slices.length?h(Wheel,{slices,rot,spinning,T,onTick:tick}):h('p',{className:'mut'},'No quedan opciones para ti.'),
+    slices.length?h(Wheel,{slices,rot,spinning,T,onTick:tick}):h('p',{className:'mut'},'No quedan opciones.'),
     msg&&h('p',{className:'mut'},msg),
     h('button',{className:'btn pulse',disabled:spinning||!live.length,onClick:spin},spinning?'Girando…':'🎰 ¡Girar la ruleta!'),
-    h('p',{className:'mut'},`Opciones disponibles para ti: ${live.length}`),
+    h('p',{className:'mut'},`Opciones en la ruleta: ${slices.length}`),
     h('div',{style:{textAlign:'center'}},h('button',{className:'chip small',onClick:()=>{toggleMute();setMuted(isMuted())}},muted?'🔇 Sonido apagado':'🔊 Sonido activado')));
 }
 
-function Admin({db,cfg,res,theme,T,title:evTitle,dl}){
+function Admin({db,cfg,res,raw,theme,T,title:evTitle,dl}){
   const [title,setTitle]=useState(cfg?cfg.title:'Ruleta de la Novena');
   const [date,setDate]=useState(cfg&&cfg.date||'');
   const [pt,setPt]=useState(cfg?cfg.people.join('\n'):'');
@@ -205,12 +214,18 @@ function Admin({db,cfg,res,theme,T,title:evTitle,dl}){
   const people=withIds(lines(pt)),opts=withIds(lines(ot));
   const isAllowed=(p,o)=>!allow[p]||allow[p].includes(o);
   function toggle(p,o){const cur=allow[p]||opts.map(x=>x.id);setAllow({...allow,[p]:cur.includes(o)?cur.filter(x=>x!==o):[...cur,o]})}
+  const newRound=()=>String(Date.now());
+  async function wipeAll(){for(const id of Object.keys(raw||{}))await db.doc('results/'+id).delete()}
   async function saveCfg(){
     const restr={};people.forEach(p=>{if(allow[p.id]&&allow[p.id].length<opts.length)restr[p.id]=allow[p.id].filter(o=>opts.some(x=>x.id===o))});
-    await db.doc('config/main').set({title,people:lines(pt),options:lines(ot),restr,theme,date});setOk('¡Guardado!');setTimeout(()=>setOk(''),2500);
+    /* Si cambió la lista de personas u opciones = ruleta nueva: ronda nueva y resultados viejos fuera. */
+    const changed=!cfg||JSON.stringify(cfg.people||[])!==JSON.stringify(lines(pt))||JSON.stringify(cfg.options||[])!==JSON.stringify(lines(ot));
+    const round=changed?newRound():roundOf(cfg);
+    if(changed)await wipeAll();
+    await db.doc('config/main').set({title,people:lines(pt),options:lines(ot),restr,theme,date,round});setOk(changed?'¡Guardado! Ruleta nueva 🎉':'¡Guardado!');setTimeout(()=>setOk(''),2500);
   }
   async function free(id){await db.doc('results/'+id).delete()}
-  async function resetAll(){if(confirm('¿Borrar TODOS los resultados y empezar de nuevo?'))for(const id of Object.keys(res))await db.doc('results/'+id).delete()}
+  async function resetAll(){if(confirm('¿Borrar TODOS los resultados y empezar de nuevo?')){await wipeAll();if(cfg)await db.doc('config/main').set({...cfg,round:newRound()})}}
   return h('div',null,
     h('div',{className:'card'},h('label',null,'Título'),h('input',{value:title,onChange:e=>setTitle(e.target.value)}),
       h('label',null,'Fecha del evento'),
@@ -220,8 +235,9 @@ function Admin({db,cfg,res,theme,T,title:evTitle,dl}){
         h('span',{className:'mut',style:{textAlign:'left'}},date?'Fecha fija: '+fmtDate(date):'Automática: cada imagen lleva el día en que se juega')),
       h('label',null,'Participantes (uno por línea)'),h('textarea',{rows:6,value:pt,placeholder:'Angie\nSandra\n…',onChange:e=>setPt(e.target.value)}),
       h('label',null,'Opciones de la ruleta (una por línea)'),h('textarea',{rows:7,value:ot,onChange:e=>setOt(e.target.value)}),
-      h('p',{className:'mut'},'El diseño que tengas elegido arriba se guarda como el predeterminado para todos.')),
-    people.length>0&&h('div',{className:'card'},h('b',null,'Restricciones'),h('p',{className:'mut'},'Toca una opción para prohibírsela a esa persona (se tacha).'),
+      h('p',{className:'mut'},'El diseño que tengas elegido arriba se guarda como el predeterminado para todos.'),
+      h('p',{className:'mut'},'Si cambias participantes u opciones, se crea una ruleta nueva y todos los celulares empiezan de cero.')),
+    people.length>0&&h('div',{className:'card'},h('b',null,'Restricciones'),h('p',{className:'mut'},'Toca una opción para prohibírsela a esa persona (se tacha). La ruleta igual muestra todas las opciones, solo que nunca caerá en las tachadas.'),
       people.map(p=>h('div',{key:p.id,style:{margin:'10px 0'}},h('div',{style:{fontWeight:700,marginBottom:4}},p.label),
         h('div',{className:'chips',style:{justifyContent:'flex-start'}},opts.map(o=>h('button',{key:o.id,className:'chip small'+(isAllowed(p.id,o.id)?'':' off'),onClick:()=>toggle(p.id,o.id)},o.label)))))),
     h('button',{className:'btn',onClick:saveCfg},ok||'💾 Guardar configuración'),
@@ -230,7 +246,7 @@ function Admin({db,cfg,res,theme,T,title:evTitle,dl}){
       h('button',{className:'btn',onClick:buildSummary},'🖼 Imagen con todos los premios'),
       sumUrl&&h('div',{style:{textAlign:'center'}},h('img',{src:sumUrl,alt:'Resumen',style:{width:'100%',borderRadius:14,marginTop:10}}),
         h('button',{className:'btn',onClick:()=>dl.save({filename:'girafest-premios.png',data:sumBlob,share:true})},'⬇ Guardar imagen')),
-      h('button',{className:'btn ghost',onClick:resetAll},'Reiniciar todo')),
+      h('button',{className:'btn ghost',onClick:resetAll},'Reiniciar todo (ronda nueva)')),
     h('div',{className:'card',style:{textAlign:'center'}},h('b',null,'Compartir GiraFest'),
       qr&&h('img',{src:qr,alt:'QR',style:{width:'min(70vw,240px)',borderRadius:14,display:'block',margin:'12px auto'}}),
       h('input',{readOnly:true,value:link,onFocus:e=>e.target.select()}),
@@ -241,11 +257,23 @@ function Admin({db,cfg,res,theme,T,title:evTitle,dl}){
 
 function App(){
   const db=realDb,dl=dlObj,[admin,setAdmin]=useState(()=>sessionStorage.getItem('ruleta_admin')==='1'),[tab,setTab]=useState('play');
-  const [st,setSt]=useState('loading'),[cfg,setCfg]=useState(null),[res,setRes]=useState({});
+  const [st,setSt]=useState('loading'),[cfg,setCfg]=useState(null),[raw,setRaw]=useState({});
   const [me,setMe]=useState(()=>{try{return localStorage.getItem('ruleta_me')}catch(e){return null}});
   const [tp,setTp]=useState(null),[showPin,setShowPin]=useState(false),[pin,setPin]=useState(''),[bad,setBad]=useState(false);
+  const round=roundOf(cfg);
+  /* Solo cuentan los resultados de la ronda actual */
+  const res={};Object.keys(raw).forEach(k=>{if(inRound(raw[k],round))res[k]=raw[k]});
   const themeId=(admin&&tp&&THEMES[tp]?tp:null)||(cfg&&THEMES[cfg.theme]?cfg.theme:'clasico'),T=THEMES[themeId];
   useEffect(()=>{const s=document.documentElement.style;['bg1','bg2','card','tx','mut','acc','acc2','bd','btx'].forEach(k=>s.setProperty('--'+k,T[k]));document.body.style.fontFamily=T.bf+",system-ui,sans-serif"},[themeId]);
+  /* Si cambió la ronda, este celular olvida quién era y a qué jugó */
+  useEffect(()=>{
+    if(!cfg)return;
+    try{
+      const stored=localStorage.getItem('ruleta_round')||'0';
+      if(stored!==round){localStorage.removeItem('ruleta_me');setMe(null)}
+      localStorage.setItem('ruleta_round',round);
+    }catch(e){}
+  },[round,!!cfg]);
   function unlock(){if(pin===String(import.meta.env.VITE_ADMIN_PIN)){sessionStorage.setItem('ruleta_admin','1');setAdmin(true)}else{setBad(true)}}
   function chooseTheme(id){setTp(id);if(cfg)db.doc('config/main').set({...cfg,theme:id}).catch(()=>{})}
   useEffect(()=>{
@@ -254,17 +282,22 @@ function App(){
     (async()=>{
       const d=realDb;
       un.push(d.doc('config/main').onSnapshot(s=>{ready=true;setCfg(s.exists?s.data():null);setSt('ok')},()=>setSt('nodb')));
-      un.push(d.collection('results').onSnapshot(s=>{const m={};s.docs.forEach(x=>m[x.id]=x.data());setRes(m)},()=>{}));
+      un.push(d.collection('results').onSnapshot(s=>{const m={};s.docs.forEach(x=>m[x.id]=x.data());setRaw(m)},()=>{}));
     })();
     return()=>{clearTimeout(t);un.forEach(f=>f())};
   },[]);
+  /* Al volver a la pestaña/app (p. ej. escanear el QR otra vez) se recarga si hay versión nueva de la ruleta */
+  useEffect(()=>{
+    const onVis=()=>{if(document.visibilityState==='visible'){try{const k=localStorage.getItem('ruleta_round');if(k&&k!==round&&cfg)location.reload()}catch(e){}}};
+    document.addEventListener('visibilitychange',onVis);return()=>document.removeEventListener('visibilitychange',onVis);
+  },[round,!!cfg]);
   const title=cfg&&cfg.title||'Ruleta de la Novena';
   let body;
   if(st==='loading')body=h('p',{className:'mut'},'Cargando…');
   else if(st==='nodb')body=h('div',{className:'card'},h('p',{className:'mut'},'No pude conectar con la base de datos compartida. Abre el enlace con tu sesión de Claude iniciada o pide acceso a quien organiza.'));
-  else if(admin&&tab==='admin')body=h(Admin,{db,cfg,res,theme:themeId,T,title,dl});
+  else if(admin&&tab==='admin')body=h(Admin,{db,cfg,res,raw,theme:themeId,T,title,dl});
   else if(!cfg)body=h('div',{className:'card'},h('p',{className:'mut'},admin?'Aún no hay configuración. Ve a Panel y crea la lista.':'El organizador aún no ha configurado la ruleta.'));
-  else body=h(Play,{db,cfg,res,me,setMe,dl,T,title});
+  else body=h(Play,{key:round,db,cfg,res,me,setMe,dl,T,title});
   return h('div',null,h(Deco,{key:themeId,e:T.deco}),
     h('div',{className:'logo','aria-label':'AAS',style:{WebkitMaskImage:`url(${logo})`,maskImage:`url(${logo})`}}),
     h('h1',{style:{fontFamily:T.tf}},T.e+' GiraFest '+T.e),h('p',{className:'sub'},title+(cfg&&cfg.date?' · '+fmtDate(cfg.date):'')),
