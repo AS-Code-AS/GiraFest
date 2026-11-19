@@ -37,9 +37,15 @@ const split=t=>{if(t.length<=13)return[t];const m=t.length/2;let b=-1,bd=99;for(
 
 /* ---------- Imagen del premio (PNG) ---------- */
 function wrap(x,t,maxW){const w=t.split(' '),out=[];let l='';w.forEach(p=>{const tt=l?l+' '+p:p;if(x.measureText(tt).width>maxW&&l){out.push(l);l=p}else l=tt});if(l)out.push(l);return out}
-async function makeImage(r,T,title,evDate){
-  const W=1080,H=1350,c=document.createElement('canvas');c.width=W;c.height=H;const x=c.getContext('2d');
+async function makeImage(r,T,title,evDate,ex){
+  ex=ex||{};
+  const W=1080;
   try{await Promise.all([T.tf,T.wf,T.bf].map(f=>document.fonts.load('700 60px '+f)))}catch(e){}
+  const wishes=(ex.wishes||[]).filter(Boolean),budget=ex.budget||'';
+  const mc=document.createElement('canvas').getContext('2d');mc.font='500 40px '+T.bf+',sans-serif';
+  const wl=[];wishes.forEach(w=>wrap(mc,w,W-300).slice(0,2).forEach((l,i)=>wl.push((i===0?'• ':'')+l)));
+  const extra=(budget?64:0)+(wl.length?66+wl.length*54:0);
+  const H=1350+extra,c=document.createElement('canvas');c.width=W;c.height=H;const x=c.getContext('2d');
   const g=x.createLinearGradient(0,0,W,H);g.addColorStop(0,T.bg1);g.addColorStop(1,T.bg2);x.fillStyle=g;x.fillRect(0,0,W,H);
   x.font='54px serif';x.globalAlpha=.5;for(let i=0;i<30;i++)x.fillText(T.deco,(i*337)%W,(i*211)%H+40);x.globalAlpha=1;
   x.beginPath();x.roundRect(60,60,W-120,H-120,52);x.fillStyle=T.cardS;x.fill();x.lineWidth=5;x.strokeStyle=T.acc2;x.stroke();
@@ -56,8 +62,12 @@ async function makeImage(r,T,title,evDate){
   const ls=wrap(x,r.label,W-220).slice(0,3);ls.forEach((l,i)=>x.fillText(l,cx,870+i*118));
   x.fillStyle=T.tx;x.font='700 66px '+T.tf+',serif';x.fillText('para '+r.name,cx,1120);
   x.fillStyle=T.mut;x.font='500 34px '+T.bf+',sans-serif';x.fillText(fmtDate(evDate,r.at),cx,1175);
+  let yy=1235;
+  if(budget){x.fillStyle=T.tx;x.font='700 40px '+T.wf+',sans-serif';x.fillText('🎁 Valor del regalo: '+budget,cx,yy);yy+=64}
+  if(wl.length){x.fillStyle=T.acc;x.font='700 38px '+T.wf+',sans-serif';x.fillText('Lo que pidió '+r.label+':',cx,yy);yy+=60;
+    x.fillStyle=T.tx;x.font='500 40px '+T.bf+',sans-serif';wl.forEach(l=>{x.fillText(l,cx,yy);yy+=54})}
   const li=await new Promise(res=>{const i=new Image();i.onload=()=>res(i);i.onerror=()=>res(null);i.src=logo});
-  if(li){const lw=130,lh=Math.round(lw*li.height/li.width),t=document.createElement('canvas');t.width=lw;t.height=lh;const tx=t.getContext('2d');tx.drawImage(li,0,0,lw,lh);tx.globalCompositeOperation='source-in';tx.fillStyle=T.tx;tx.fillRect(0,0,lw,lh);x.globalAlpha=.9;x.drawImage(t,(W-lw)/2,1205);x.globalAlpha=1}
+  if(li){const lw=130,lh=Math.round(lw*li.height/li.width),t=document.createElement('canvas');t.width=lw;t.height=lh;const tx=t.getContext('2d');tx.drawImage(li,0,0,lw,lh);tx.globalCompositeOperation='source-in';tx.fillStyle=T.tx;tx.fillRect(0,0,lw,lh);x.globalAlpha=.9;x.drawImage(t,(W-lw)/2,1205+extra);x.globalAlpha=1}
   return new Promise(res=>c.toBlob(res,'image/png'));
 }
 
@@ -141,28 +151,39 @@ function Wheel({slices,rot,spinning,T,onTick}){
 function Deco({e}){const ps=useRef(Array.from({length:18},()=>({l:Math.random()*100,d:9+Math.random()*10,s:14+Math.random()*18,w:-Math.random()*16})));
   return h('div',{className:'deco','aria-hidden':true},ps.current.map((p,i)=>h('span',{key:i,style:{left:p.l+'%',fontSize:p.s,animationDuration:p.d+'s',animationDelay:p.w+'s'}},e)))}
 
+function Wishes({db,res,me,locked}){
+  const cur=(res[me]&&res[me].wishes)||[];
+  const [a,setA]=useState(cur[0]||''),[b,setB]=useState(cur[1]||''),[ok,setOk]=useState('');
+  async function save(){const w=[a,b].map(x=>x.trim().slice(0,80)).filter(Boolean);try{await db.doc('results/'+me).set({...res[me],wishes:w});setOk('¡Guardado!')}catch(e){setOk('No se pudo guardar')}setTimeout(()=>setOk(''),2000)}
+  return h('div',{className:'card'},h('b',null,'🎁 Lo que me gustaría recibir'),h('p',{className:'mut'},'Opcional. Tu amigo secreto lo verá en su tarjeta. Puedes cambiarlo cuando quieras.'),
+    h('input',{value:a,maxLength:80,placeholder:'Idea 1 (opcional)',onChange:e=>setA(e.target.value)}),
+    h('input',{value:b,maxLength:80,placeholder:'Idea 2 (opcional)',style:{marginTop:8},onChange:e=>setB(e.target.value)}),
+    h('button',{className:'btn',disabled:locked,onClick:save},ok||'Guardar'));
+}
+
 function Play({db,cfg,res,me,setMe,dl,T,title}){
   const [pick,setPick]=useState(null),[rot,setRot]=useState(0),[spinning,setSpinning]=useState(false),[frozen,setFrozen]=useState(null),[msg,setMsg]=useState(''),[confirmOpen,setConfirmOpen]=useState(false),[muted,setMuted]=useState(isMuted());
-  const [blob,setBlob]=useState(null),[url,setUrl]=useState(null);const auto=useRef(false);
+  const [blob,setBlob]=useState(null),[url,setUrl]=useState(null),[w1,setW1]=useState(''),[w2,setW2]=useState('');const auto=useRef(false);
   const round=roundOf(cfg);
   const people=withIds(cfg.people||[]);
   const mine=me&&res[me];
   const taken=new Set(Object.values(res).map(r=>r.optionId).filter(Boolean));
   const player=people.find(p=>p.id===me);
   const won=mine&&mine.optionId?mine:null;
+  const fr=won&&res[won.optionId],fw=(fr&&fr.wishes)||[]; /* lo que pidió tu amigo secreto */
   function save(b,r,manual){if(dl&&b)dl.save({filename:`mi-premio-${slug(r.name)}.png`,data:b,share:!!manual}).catch(()=>{})}
   useEffect(()=>{if(!won||spinning)return;let dead=false,u;
-    makeImage(won,T,title,cfg.date).then(b=>{if(dead)return;setBlob(b);u=URL.createObjectURL(b);setUrl(u);if(auto.current){auto.current=false;setTimeout(()=>save(b,won),700)}});
-    return()=>{dead=true;if(u)URL.revokeObjectURL(u)}},[won&&won.optionId,spinning,T.name,cfg.date]);
+    makeImage(won,T,title,cfg.date,{budget:cfg.budget,wishes:fw}).then(b=>{if(dead)return;setBlob(b);u=URL.createObjectURL(b);setUrl(u);if(auto.current){auto.current=false;setTimeout(()=>save(b,won),700)}});
+    return()=>{dead=true;if(u)URL.revokeObjectURL(u)}},[won&&won.optionId,spinning,T.name,cfg.date,cfg.budget,JSON.stringify(fw)]);
   async function join(){
-    try{await db.doc('results/'+pick).set({name:people.find(p=>p.id===pick).label,joined:true,at:Date.now(),round});localStorage.setItem('ruleta_me',pick);localStorage.setItem('ruleta_round',round)}catch(e){}
+    try{await db.doc('results/'+pick).set({name:people.find(p=>p.id===pick).label,joined:true,at:Date.now(),round,wishes:[w1,w2].map(x=>x.trim().slice(0,80)).filter(Boolean)});localStorage.setItem('ruleta_me',pick);localStorage.setItem('ruleta_round',round)}catch(e){}
     setConfirmOpen(false);setMe(pick);
   }
   async function spin(){
     initAudio();setMsg('');setSpinning(false);
     const snap=await db.collection('results').get();
     const docs=snap.docs.map(d=>({id:d.id,...d.data()})).filter(d=>inRound(d,round));
-    const tk=new Set(docs.map(d=>d.optionId).filter(Boolean)),done=new Set(docs.filter(d=>d.optionId).map(d=>d.id));
+    const tk=new Set(docs.map(d=>d.optionId).filter(Boolean)),done=new Set(docs.filter(d=>d.optionId).map(d=>d.id)),myW=(docs.find(d=>d.id===me)||{}).wishes||[];
     const pool=poolFor(cfg,me,tk);              /* donde SÍ puede caer */
     const vis=visibleFor(cfg,tk);               /* lo que se dibuja: todas */
     if(!pool.length){setMsg('Ya no quedan opciones disponibles para ti. Avísale a quien organiza.');return}
@@ -173,7 +194,7 @@ function Play({db,cfg,res,me,setMe,dl,T,title}){
     const target=rot-(rot%360)+360*7+(360-(idx+.5)*seg)+(Math.random()-.5)*seg*.7;
     requestAnimationFrame(()=>requestAnimationFrame(()=>{setSpinning(true);setRot(target)}));
     setTimeout(async()=>{
-      const r={name:player.label,optionId:win.id,label:win.label,joined:true,at:Date.now(),round};
+      const r={name:player.label,optionId:win.id,label:win.label,joined:true,at:Date.now(),round,wishes:myW};
       auto.current=true;
       try{await db.doc('results/'+me).set(r)}catch(e){setMsg('No se pudo guardar. Intenta de nuevo.');auto.current=false}
       setSpinning(false);setFrozen(null);winSound();
@@ -182,17 +203,18 @@ function Play({db,cfg,res,me,setMe,dl,T,title}){
       confetti({particleCount:170,spread:100,origin:{y:.5},colors:co});setTimeout(()=>confetti({particleCount:90,angle:60,spread:60,origin:{x:0,y:.7},colors:co}),300);setTimeout(()=>confetti({particleCount:90,angle:120,spread:60,origin:{x:1,y:.7},colors:co}),500);
     },6300);
   }
-  if(won&&!spinning) return h('div',{className:'card win'},h('div',{className:'mut'},`${won.name}, te tocó:`),h('div',{className:'big'},T.e+' '+won.label),
+  if(won&&!spinning) return h(React.Fragment,null,h('div',{className:'card win'},h('div',{className:'mut'},`${won.name}, te tocó:`),h('div',{className:'big'},T.e+' '+won.label),cfg.budget&&h('div',{className:'mut'},'🎁 Valor del regalo: '+cfg.budget),fw.length>0&&h('div',{className:'mut',style:{margin:'8px 0'}},h('b',null,`Lo que pidió ${won.label}:`),fw.map((w,i)=>h('div',{key:i},'• '+w))),
     url?h('img',{src:url,alt:'Tu premio'}):h('div',{className:'mut'},'Preparando tu imagen…'),
     h('div',{className:'mut',style:{marginTop:8}},'Tip: mantén presionada la imagen para guardarla en tu galería.'),
     h('div',{className:'mut',style:{marginTop:4}},'Ya participaste. Este enlace no permite volver a jugar.'),
-    dl&&blob&&h('button',{className:'btn',onClick:()=>save(blob,won,true)},'⬇ Guardar mi imagen'));
+    dl&&blob&&h('button',{className:'btn',onClick:()=>save(blob,won,true)},'⬇ Guardar mi imagen')),cfg.secret&&h(Wishes,{db,res,me}));
   if(!me||!player){
     const free=people.filter(p=>!res[p.id]);
     const who=pick&&people.find(p=>p.id===pick);
     return h(React.Fragment,null,confirmOpen&&who&&h('div',{className:'modal',onClick:()=>setConfirmOpen(false)},
       h('div',{className:'card win',onClick:e=>e.stopPropagation()},h('h3',{style:{marginTop:0,fontFamily:T.tf,fontSize:'1.5rem'}},`¿Eres ${who.label}?`),
         h('p',{className:'mut'},'Cuando confirmes, ese nombre queda tomado y no se puede cambiar. Si te equivocas, solo la organizadora puede liberarlo.'),
+        cfg.secret&&h('div',null,h('p',{className:'mut'},'🎁 Opcional: dos ideas de regalo que te gustaría recibir'),h('input',{value:w1,maxLength:80,placeholder:'Idea 1 (opcional)',onChange:e=>setW1(e.target.value)}),h('input',{value:w2,maxLength:80,placeholder:'Idea 2 (opcional)',style:{marginTop:8},onChange:e=>setW2(e.target.value)})),
         h('button',{className:'btn pulse',onClick:join},`Sí, soy ${who.label}`),
         h('button',{className:'btn ghost',onClick:()=>setConfirmOpen(false)},'Volver'))),
     h('div',{className:'card'},h('h3',{style:{textAlign:'center',marginTop:0,fontFamily:T.tf}},'¿Quién eres?'),
@@ -201,12 +223,12 @@ function Play({db,cfg,res,me,setMe,dl,T,title}){
       h('p',{className:'mut'},'Elige con cuidado: una vez entres, ese nombre queda tomado.')));
   }
   const live=poolFor(cfg,me,taken),visible=visibleFor(cfg,taken),slices=frozen||visible;
-  return h('div',{className:'card'},h('h3',{style:{textAlign:'center',marginTop:0,fontFamily:T.tf,fontSize:'1.4rem'}},`Hola, ${player.label} 👋`),
+  return h(React.Fragment,null,h('div',{className:'card'},h('h3',{style:{textAlign:'center',marginTop:0,fontFamily:T.tf,fontSize:'1.4rem'}},`Hola, ${player.label} 👋`),cfg.budget&&h('p',{className:'mut'},'🎁 Valor del regalo: '+cfg.budget),
     slices.length?h(Wheel,{slices,rot,spinning,T,onTick:tick}):h('p',{className:'mut'},'No quedan opciones.'),
     msg&&h('p',{className:'mut'},msg),
     h('button',{className:'btn pulse',disabled:spinning||!live.length,onClick:spin},spinning?'Girando…':'🎰 ¡Girar la ruleta!'),
     h('p',{className:'mut'},`Opciones en la ruleta: ${slices.length}`),
-    h('div',{style:{textAlign:'center'}},h('button',{className:'chip small',onClick:()=>{toggleMute();setMuted(isMuted())}},muted?'🔇 Sonido apagado':'🔊 Sonido activado')));
+    h('div',{style:{textAlign:'center'}},h('button',{className:'chip small',onClick:()=>{toggleMute();setMuted(isMuted())}},muted?'🔇 Sonido apagado':'🔊 Sonido activado'))),cfg.secret&&h(Wishes,{db,res,me,locked:spinning}));
 }
 
 function Admin({db,cfg,res,raw,theme,T,title:evTitle,dl}){
@@ -215,7 +237,7 @@ function Admin({db,cfg,res,raw,theme,T,title:evTitle,dl}){
   const [pt,setPt]=useState(cfg?cfg.people.join('\n'):'');
   const [ot,setOt]=useState(cfg?cfg.options.join('\n'):DEF_OPTS);
   const [allow,setAllow]=useState(cfg&&cfg.restr?cfg.restr:{});
-  const [ok,setOk]=useState(''),[secret,setSecret]=useState(!!(cfg&&cfg.secret)),[reveal,setReveal]=useState(false);
+  const [ok,setOk]=useState(''),[secret,setSecret]=useState(!!(cfg&&cfg.secret)),[reveal,setReveal]=useState(false),[budget,setBudget]=useState(cfg&&cfg.budget||'');
   const [qr,setQr]=useState(null),[sumUrl,setSumUrl]=useState(null),[sumBlob,setSumBlob]=useState(null),[copied,setCopied]=useState(false);
   const link=window.location.origin+window.location.pathname;
   useEffect(()=>{QRCode.toDataURL(link,{width:420,margin:2,color:{dark:'#1a1a1a',light:'#ffffff'}}).then(setQr).catch(()=>{})},[]);
@@ -235,11 +257,11 @@ function Admin({db,cfg,res,raw,theme,T,title:evTitle,dl}){
     const changed=!cfg||JSON.stringify(cfg.people||[])!==JSON.stringify(lines(pt))||JSON.stringify(cfg.options||[])!==JSON.stringify(lines(ot));
     const round=changed?newRound():roundOf(cfg);
     if(changed)await wipeAll();
-    await db.doc('config/main').set({title,people:lines(pt),options:lines(ot),restr,theme,date,round,secret});setOk(changed?'¡Guardado! Ruleta nueva 🎉':'¡Guardado!');setTimeout(()=>setOk(''),2500);
+    await db.doc('config/main').set({title,people:lines(pt),options:lines(ot),restr,theme,date,round,secret,budget});setOk(changed?'¡Guardado! Ruleta nueva 🎉':'¡Guardado!');setTimeout(()=>setOk(''),2500);
   }
   async function free(id){await db.doc('results/'+id).delete()}
   async function resetAll(){if(confirm('¿Borrar TODOS los resultados y empezar de nuevo?')){await wipeAll();if(cfg)await db.doc('config/main').set({...cfg,round:newRound()})}}
-  async function newDraw(){if(!confirm('¿Empezar un sorteo NUEVO? Se borran resultados, participantes, opciones y restricciones.'))return;await wipeAll();await db.doc('config/main').set({title,theme,secret,people:[],options:[],restr:{},date:'',round:newRound()});setPt('');setOt('');setAllow({});setDate('');setReveal(false)}
+  async function newDraw(){if(!confirm('¿Empezar un sorteo NUEVO? Se borran resultados, participantes, opciones y restricciones.'))return;await wipeAll();await db.doc('config/main').set({title,theme,secret,budget,people:[],options:[],restr:{},date:'',round:newRound()});setPt('');setOt('');setAllow({});setDate('');setReveal(false)}
   return h('div',null,
     h('div',{className:'card'},h('label',null,'Título'),h('input',{value:title,onChange:e=>setTitle(e.target.value)}),
       h('label',null,'Fecha del evento'),
@@ -247,6 +269,7 @@ function Admin({db,cfg,res,raw,theme,T,title:evTitle,dl}){
       h('div',{style:{display:'flex',gap:8,alignItems:'center',marginTop:8,flexWrap:'wrap'}},
         h('button',{className:'chip small'+(date?'':' on'),onClick:()=>setDate('')},'📅 Usar la fecha de hoy'),
         h('span',{className:'mut',style:{textAlign:'left'}},date?'Fecha fija: '+fmtDate(date):'Automática: cada imagen lleva el día en que se juega')),
+      h('label',null,'Valor del regalo (opcional, sale en la tarjeta)'),h('input',{value:budget,placeholder:'Ej: $50.000',onChange:e=>setBudget(e.target.value)}),
       h('label',null,'Participantes (uno por línea)'),h('textarea',{rows:6,value:pt,placeholder:'Angie\nSandra\n…',onChange:e=>setPt(e.target.value)}),
       h('label',null,'Opciones de la ruleta (una por línea)'),h('textarea',{rows:7,value:ot,onChange:e=>setOt(e.target.value)}),
       h('label',{style:{display:'flex',gap:8,alignItems:'center',marginTop:12}},h('input',{type:'checkbox',checked:secret,style:{width:'auto'},onChange:e=>setSecret(e.target.checked)}),'🎁 Modo amigo secreto (nadie se saca a sí mismo y nadie se queda sin opción)'),
