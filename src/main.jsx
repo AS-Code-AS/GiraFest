@@ -41,13 +41,26 @@ async function makeImage(r,T,title,evDate,ex){
   ex=ex||{};
   const W=1080;
   try{await Promise.all([T.tf,T.wf,T.bf].map(f=>document.fonts.load('700 60px '+f)))}catch(e){}
-  const wishes=(ex.wishes||[]).filter(Boolean),budget=ex.budget||'';
-  const mc=document.createElement('canvas').getContext('2d');mc.font='500 40px '+T.bf+',sans-serif';
-  const wl=[];wishes.forEach(w=>wrap(mc,w,W-300).slice(0,2).forEach((l,i)=>wl.push((i===0?'• ':'')+l)));
-  const extra=(budget?64:0)+(wl.length?66+wl.length*54:0);
-  const H=1350+extra,c=document.createElement('canvas');c.width=W;c.height=H;const x=c.getContext('2d');
+  const li=await new Promise(res=>{const i=new Image();i.onload=()=>res(i);i.onerror=()=>res(null);i.src=logo});
+  const lw=130,lh=li?Math.round(lw*li.height/li.width):0;
+  const wishes=(ex.wishes||[]).filter(Boolean),budget=fmtMoney(ex.budget||'');
+  /* ---- 1) medir todo para que la tarjeta se ajuste al contenido ---- */
+  const mc=document.createElement('canvas').getContext('2d');
+  let ns=104;mc.font='700 '+ns+'px '+T.wf+',sans-serif';
+  let nl=wrap(mc,r.label,W-220);if(nl.length>1){ns=88;mc.font='700 '+ns+'px '+T.wf+',sans-serif';nl=wrap(mc,r.label,W-220)}
+  nl=nl.slice(0,3);const lineH=Math.round(ns*1.14);
+  mc.font='500 40px '+T.bf+',sans-serif';
+  const wl=[];wishes.forEach(w=>wrap(mc,w,W-340).slice(0,2).forEach((l,k)=>wl.push((k===0?'• ':'')+l)));
+  const nameY=850,nameEnd=nameY+(nl.length-1)*lineH;
+  const divY=nameEnd+62,paraY=divY+88,dateY=paraY+60;
+  const hasPanel=!!budget||wl.length>0,panelTop=dateY+54;
+  let ph=0;if(hasPanel){ph=46;if(budget)ph+=64+(wl.length?18:0);if(wl.length)ph+=58+wl.length*52;ph+=10}
+  const logoY=(hasPanel?panelTop+ph:dateY)+64;
+  const H=logoY+lh+112;
+  /* ---- 2) dibujar ---- */
+  const c=document.createElement('canvas');c.width=W;c.height=H;const x=c.getContext('2d');
   const g=x.createLinearGradient(0,0,W,H);g.addColorStop(0,T.bg1);g.addColorStop(1,T.bg2);x.fillStyle=g;x.fillRect(0,0,W,H);
-  x.font='54px serif';x.globalAlpha=.5;for(let i=0;i<30;i++)x.fillText(T.deco,(i*337)%W,(i*211)%H+40);x.globalAlpha=1;
+  x.font='54px serif';x.globalAlpha=.5;for(let i=0;i<Math.round(H/45);i++)x.fillText(T.deco,(i*337)%W,(i*211)%H+40);x.globalAlpha=1;
   x.beginPath();x.roundRect(60,60,W-120,H-120,52);x.fillStyle=T.cardS;x.fill();x.lineWidth=5;x.strokeStyle=T.acc2;x.stroke();
   const cx=W/2,cy=330,R=210,n=T.colors.length*1;
   x.beginPath();x.arc(cx,cy,R+30,0,7);x.fillStyle=T.ring;x.fill();
@@ -57,21 +70,30 @@ async function makeImage(r,T,title,evDate,ex){
   x.beginPath();x.moveTo(cx-24,cy-R-50);x.lineTo(cx+24,cy-R-50);x.lineTo(cx,cy-R+4);x.closePath();x.fillStyle=T.acc2;x.fill();x.strokeStyle='#fff';x.lineWidth=4;x.stroke();
   x.textAlign='center';x.fillStyle=T.tx;x.font='700 64px '+T.tf+',serif';x.fillText('GiraFest',cx,630);
   x.fillStyle=T.mut;x.font='500 34px '+T.bf+',sans-serif';x.fillText(title,cx,682);
-  x.font='500 46px '+T.bf+',sans-serif';x.fillText('¡Te tocó!',cx,750);
-  x.font='700 104px '+T.wf+',sans-serif';x.fillStyle=T.acc;
-  const ls=wrap(x,r.label,W-220).slice(0,3);ls.forEach((l,i)=>x.fillText(l,cx,870+i*118));
-  x.fillStyle=T.tx;x.font='700 66px '+T.tf+',serif';x.fillText('para '+r.name,cx,1120);
-  x.fillStyle=T.mut;x.font='500 34px '+T.bf+',sans-serif';x.fillText(fmtDate(evDate,r.at),cx,1175);
-  let yy=1235;
-  if(budget){x.fillStyle=T.tx;x.font='700 40px '+T.wf+',sans-serif';x.fillText('🎁 Valor del regalo: '+budget,cx,yy);yy+=64}
-  if(wl.length){x.fillStyle=T.acc;x.font='700 38px '+T.wf+',sans-serif';x.fillText('Lo que pidió '+r.label+':',cx,yy);yy+=60;
-    x.fillStyle=T.tx;x.font='500 40px '+T.bf+',sans-serif';wl.forEach(l=>{x.fillText(l,cx,yy);yy+=54})}
-  const li=await new Promise(res=>{const i=new Image();i.onload=()=>res(i);i.onerror=()=>res(null);i.src=logo});
-  if(li){const lw=130,lh=Math.round(lw*li.height/li.width),t=document.createElement('canvas');t.width=lw;t.height=lh;const tx=t.getContext('2d');tx.drawImage(li,0,0,lw,lh);tx.globalCompositeOperation='source-in';tx.fillStyle=T.tx;tx.fillRect(0,0,lw,lh);x.globalAlpha=.9;x.drawImage(t,(W-lw)/2,1205+extra);x.globalAlpha=1}
+  x.font='500 46px '+T.bf+',sans-serif';x.fillText('¡Te tocó!',cx,752);
+  x.font='700 '+ns+'px '+T.wf+',sans-serif';x.fillStyle=T.acc;
+  nl.forEach((l,k)=>x.fillText(l,cx,nameY+k*lineH));
+  /* separador */
+  x.strokeStyle=T.acc2;x.lineWidth=3;x.globalAlpha=.7;
+  x.beginPath();x.moveTo(cx-190,divY);x.lineTo(cx-34,divY);x.moveTo(cx+34,divY);x.lineTo(cx+190,divY);x.stroke();x.globalAlpha=1;
+  x.fillStyle=T.acc2;x.font='34px serif';x.fillText(T.deco,cx,divY+12);
+  x.fillStyle=T.tx;x.font='700 66px '+T.tf+',serif';x.fillText('para '+r.name,cx,paraY);
+  x.fillStyle=T.mut;x.font='500 34px '+T.bf+',sans-serif';x.fillText(fmtDate(evDate,r.at),cx,dateY);
+  if(hasPanel){
+    x.beginPath();x.roundRect(110,panelTop,W-220,ph,34);x.fillStyle='rgba(128,128,128,.16)';x.fill();
+    x.lineWidth=2;x.strokeStyle=T.acc2;x.globalAlpha=.55;x.stroke();x.globalAlpha=1;
+    let yy=panelTop+46;
+    if(budget){x.fillStyle=T.tx;x.font='700 40px '+T.wf+',sans-serif';x.fillText('🎁 Valor del regalo: '+budget,cx,yy+28);yy+=64+(wl.length?18:0)}
+    if(wl.length){x.fillStyle=T.acc;x.font='700 38px '+T.wf+',sans-serif';x.fillText('Lo que pidió '+r.label+':',cx,yy+28);yy+=58;
+      x.fillStyle=T.tx;x.font='500 40px '+T.bf+',sans-serif';wl.forEach(l=>{x.fillText(l,cx,yy+28);yy+=52})}
+  }
+  if(li){const t=document.createElement('canvas');t.width=lw;t.height=lh;const tx=t.getContext('2d');tx.drawImage(li,0,0,lw,lh);tx.globalCompositeOperation='source-in';tx.fillStyle=T.tx;tx.fillRect(0,0,lw,lh);x.globalAlpha=.9;x.drawImage(t,(W-lw)/2,logoY);x.globalAlpha=1}
   return new Promise(res=>c.toBlob(res,'image/png'));
 }
 
 /* ---------- Fecha del evento ---------- */
+/* 70000 -> $70.000 (si ya escribiste algo como '$70 mil', se respeta tal cual) */
+function fmtMoney(b){b=String(b||'').trim();return /^\d+$/.test(b)?'$'+Number(b).toLocaleString('es-CO'):b}
 function fmtDate(d,fallback){
   const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(d||'');
   const dt=m?new Date(+m[1],+m[2]-1,+m[3]):new Date(fallback||Date.now());
@@ -203,7 +225,7 @@ function Play({db,cfg,res,me,setMe,dl,T,title}){
       confetti({particleCount:170,spread:100,origin:{y:.5},colors:co});setTimeout(()=>confetti({particleCount:90,angle:60,spread:60,origin:{x:0,y:.7},colors:co}),300);setTimeout(()=>confetti({particleCount:90,angle:120,spread:60,origin:{x:1,y:.7},colors:co}),500);
     },6300);
   }
-  if(won&&!spinning) return h(React.Fragment,null,h('div',{className:'card win'},h('div',{className:'mut'},`${won.name}, te tocó:`),h('div',{className:'big'},T.e+' '+won.label),cfg.budget&&h('div',{className:'mut'},'🎁 Valor del regalo: '+cfg.budget),fw.length>0&&h('div',{className:'mut',style:{margin:'8px 0'}},h('b',null,`Lo que pidió ${won.label}:`),fw.map((w,i)=>h('div',{key:i},'• '+w))),
+  if(won&&!spinning) return h(React.Fragment,null,h('div',{className:'card win'},h('div',{className:'mut'},`${won.name}, te tocó:`),h('div',{className:'big'},T.e+' '+won.label),cfg.budget&&h('div',{className:'mut'},'🎁 Valor del regalo: '+fmtMoney(cfg.budget)),fw.length>0&&h('div',{className:'mut',style:{margin:'8px 0'}},h('b',null,`Lo que pidió ${won.label}:`),fw.map((w,i)=>h('div',{key:i},'• '+w))),
     url?h('img',{src:url,alt:'Tu premio'}):h('div',{className:'mut'},'Preparando tu imagen…'),
     h('div',{className:'mut',style:{marginTop:8}},'Tip: mantén presionada la imagen para guardarla en tu galería.'),
     h('div',{className:'mut',style:{marginTop:4}},'Ya participaste. Este enlace no permite volver a jugar.'),
@@ -223,7 +245,7 @@ function Play({db,cfg,res,me,setMe,dl,T,title}){
       h('p',{className:'mut'},'Elige con cuidado: una vez entres, ese nombre queda tomado.')));
   }
   const live=poolFor(cfg,me,taken),visible=visibleFor(cfg,taken),slices=frozen||visible;
-  return h(React.Fragment,null,h('div',{className:'card'},h('h3',{style:{textAlign:'center',marginTop:0,fontFamily:T.tf,fontSize:'1.4rem'}},`Hola, ${player.label} 👋`),cfg.budget&&h('p',{className:'mut'},'🎁 Valor del regalo: '+cfg.budget),
+  return h(React.Fragment,null,h('div',{className:'card'},h('h3',{style:{textAlign:'center',marginTop:0,fontFamily:T.tf,fontSize:'1.4rem'}},`Hola, ${player.label} 👋`),cfg.budget&&h('p',{className:'mut'},'🎁 Valor del regalo: '+fmtMoney(cfg.budget)),
     slices.length?h(Wheel,{slices,rot,spinning,T,onTick:tick}):h('p',{className:'mut'},'No quedan opciones.'),
     msg&&h('p',{className:'mut'},msg),
     h('button',{className:'btn pulse',disabled:spinning||!live.length,onClick:spin},spinning?'Girando…':'🎰 ¡Girar la ruleta!'),
